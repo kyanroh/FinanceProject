@@ -1,0 +1,943 @@
+---
+title: "Finance Project Report"
+author: | 
+  |
+  |
+  | BT2201 Business Concepts and Metrics for Analytics
+  | Semester 1, Academic Year 2022/2023
+  |
+  |
+  |
+  | Group #11
+  | Fan Kai Jie, A0233048L
+  | Fiona Xiao Jingyi, A0240290R
+  | Ong Yong Chein, A0235421R
+  | Ryan Koh Fang Rong, A0233182M
+  | Shayer Ahmed, A0150756A
+  |  
+output: 
+  pdf_document: default
+  #html_document: default
+---
+
+```{r setup, include=FALSE, warnings=FALSE, echo = F}
+library(readxl)
+library(xts)
+library(zoo)
+library(tidyverse)
+library(dplyr)
+library(psych)
+library(fPortfolio)
+library(knitr)
+library(ggplot2)
+library(ggfortify)
+library(RColorBrewer)
+library(psych)
+library(corrplot)
+
+knitr::opts_chunk$set(echo=F)
+
+options(warn=-1)
+ETFfxReturns <- read_excel("ETFfxReturns.xlsx")
+ETFfxReturns_Sheet3 <- read_excel("ETFfxReturns_Sheet3.xlsx")
+ETFfxReturns_Sheet2 <- read_excel("ETFfxReturns_Sheet2.xlsx")
+```
+
+\newpage
+# Acknowledgements
+We would like to express our sincerest gratitude to Dr Thomas for providing us with guidance and unwavering support throughout the Finance segment of the Business Concepts and Metrics for Analytics (BT2201), as well as this project.
+\newpage
+
+# 1 Introduction
+
+We propose 3 portfolios of ETFs as wealth management solutions for the typical Japanese retail investor while considering their varying levels of risk tolerance. Our 3 portfolios are differentiated according to risk levels and corresponding expected returns:
+
+i.  Low Risk (Low expected return) 
+ii.  Medium Risk (Medium expected return)
+iii.  High Risk (High expected return) 
+
+# 2 Our Selected List of ETFs
+
+16 ETFs which are traded in Japan and the United States have been chosen for the construction of our portfolios. These 16 ETFs are selected to give Japanese retail investors exposure to a large range of assets, both domestically and overseas.
+
+Furthermore, the ETFs were selected to have low fees, high liquidity (low bid-ask spread, high market capitalisation and/or high average daily volume), as well as low tracking error values.
+
+```{r characteristic table, echo=FALSE}
+#Tracking error
+TE <- c(0.12, 5.39, 3.44, 3.55, 8.30, NA, 0.02, 4.52, 4.12, 8.19, 11.63, NA, 11.66, 9.17, 22.78, 0.29)
+#ETF Characteristics Table
+ETF_characteristics <- cbind(ETFfxReturns_Sheet2[,1], ETFfxReturns_Sheet2[,2], ETFfxReturns_Sheet2[,4], ETFfxReturns_Sheet2[,6], ETFfxReturns_Sheet2[,7], ETFfxReturns_Sheet2[,10], TE) %>% rename("Bid/Ask Spread" = "B/A Spread", "Currency" = "CCY", "Tracking Error" = "TE")
+options(digits = 3)
+kable(ETF_characteristics,table.attr = "style='width:30%;'", caption = "Information on selected ETFs")
+```
+
+
+```{r historical stats, echo=FALSE}
+#Number of rows and columns in the Dataset
+nrow.rets <- nrow(ETFfxReturns)
+ncol.rets <- ncol(ETFfxReturns)
+
+#ETFfxReturns$mkt <- (1 + ETFfxReturns$mkt)*(1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+#ETFfxReturns$`AGG US Equity` <- (1 + ETFfxReturns$`AGG US Equity`)*(1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+
+#Unhedged return from USD to JPY
+for(i in 1:ncol.rets) {
+  if (i!=1 & i!= 3 & i!= 9 & i!= 15){
+    ETFfxReturns[,i] <- (1 + ETFfxReturns[,i]) * 
+      (1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+  }
+}
+
+#Number of trading days
+number.of.days <- 252
+
+#Calculating historical geometric mean
+historical.geometric.mean <- data.frame(
+  matrix(ncol = ncol.rets-1, 
+         nrow = 1))
+for (i in 1:(ncol.rets-1)) { 
+  base = 1; 
+  for (j in 1:nrow.rets) {
+      base = base * (1+ETFfxReturns[j, i+1])
+  }
+  geo.mean = base^(1/nrow.rets)-1
+  historical.geometric.mean[1, i] = geo.mean
+}
+
+annualised.hist.geo.mean = 
+  (1 + historical.geometric.mean)^number.of.days - 1
+colnames(annualised.hist.geo.mean) = colnames(ETFfxReturns)[-1]
+
+##Calculating historical variance
+historical.var <- data.frame(
+  matrix(ncol = ncol.rets - 1, 
+         nrow = 1))
+for (i in 1:(ncol.rets-1)) { 
+  historical.var[1, i] = 
+    var(ETFfxReturns[,i+1])
+}
+annualised.hist.var = number.of.days * historical.var
+colnames(historical.var) = colnames(ETFfxReturns)[-1]
+colnames(annualised.hist.var) = colnames(ETFfxReturns)[-1]
+
+#Calculating historical sd
+annualised.hist.sd = annualised.hist.var^(0.5)
+```
+
+```{r Calculation of beta, echo=FALSE}
+## Calculation of beta
+covariance.with.market <- data.frame(
+  matrix(ncol = ncol.rets-3, 
+         nrow = 1))
+for (i in 1:(ncol.rets-3)) { 
+  covariance.with.market[1, i] = 
+    cov(ETFfxReturns[,i+3], ETFfxReturns[,2])
+}
+
+#Beta = covariance(i, market)/variance(market)
+beta.df = covariance.with.market/var(ETFfxReturns$mkt)
+colnames(beta.df) = colnames(ETFfxReturns)[-(1:3)]
+
+#Demonstrate that linear regression gives the same results
+#(lmobj.AGG = lm((`AGG US Equity` )~(`mkt`), data = ETFfxReturns))
+#(lmobj.VSS = lm((`VSS US Equity` )~(`mkt`), data = ETFfxReturns))
+#These betas are the same. 
+
+#Calculating Merrill Lynch Beta 
+merrill.lynch.beta.df = (2/3)*beta.df + (1/3)
+
+#Calculating expected return from betas
+#Calculate using the mean of what he suggested and from those two websites
+#Future.annualised.risk.free.rate = 0.001697914. we will look
+#back at history and take the rate.
+annualised.market.risk.premium = mean(0.06, 0.0746, 0.0494)
+future.annualised.risk.free.rate = 0.001697914
+annualised.expected.miu = 
+  future.annualised.risk.free.rate + 
+  beta.df * annualised.market.risk.premium
+colnames(annualised.expected.miu) = colnames(ETFfxReturns)[-(1:3)]
+
+#Calculating the covariance matrix
+covariance.matrix = cov(ETFfxReturns[,-(1:3)])
+annualised.covariance.matrix = covariance.matrix * number.of.days
+```
+
+```{r plotting the frontier, echo=FALSE}
+#Now we have the expected miu and covariance matrix,we can plot the frontier
+
+#Simulate the returns to give the desired stats
+B <- array(rnorm(nrow(annualised.covariance.matrix)+1 *
+                   nrow(annualised.covariance.matrix)),
+           dim = c(nrow(annualised.covariance.matrix)+1,
+                   nrow(annualised.covariance.matrix)))
+B <- B %*% backsolve(chol(cov(B)),
+                     diag(1, nrow(annualised.covariance.matrix)))
+B <- t(B) - colMeans(B)
+B <- B / apply(B, 1, sd)
+B <- t(B)
+#round(apply(B, 2, sd), 10)
+## [1] 1 1 1 1 1
+#round(apply(B, 2, mean), 10)
+## [1] 0 0 0 0 0
+#round(cov(B), 10)
+B <- B %*% chol(annualised.covariance.matrix)
+B <- t(B) + unlist(annualised.expected.miu)
+B <- t(B)
+#check
+#all.equal(cov(B), annualised.covariance.matrix)
+#all.equal(colMeans(B), unlist(annualised.expected.miu))
+
+
+Spec <- portfolioSpec()
+Spec.rf <- Spec
+setRiskFreeRate(Spec) <- future.annualised.risk.free.rate
+setRiskFreeRate(Spec.rf) <- future.annualised.risk.free.rate
+simulate.ts <- ts(B)
+myret <- as.timeSeries(simulate.ts)
+mymvf <- portfolioFrontier(myret, Spec, constraints = "LongOnly")
+gmvP <- minvariancePortfolio(myret, Spec)
+tanP <- tangencyPortfolio(myret, Spec)
+ewSpec <- Spec
+setWeights(ewSpec) <- rep(1/(ncol.rets - 3), times = (ncol.rets-3))
+ewP <- feasiblePortfolio(myret, spec = ewSpec, constraints = "LongOnly")
+```
+
+\newpage
+# 3 Global Minimum Variance Portfolio (Low Risk)
+
+The first portfolio is the Global Minimum Variance Portfolio (GVMP), which is the portfolio with the lowest risk. It caters to investors who prefer safe investments with minimal risk.
+\
+\
+```{r GMVP, echo=FALSE, fig.height=4, echo = F}
+#Portfolio with the lowest Risk - Global Minimum Variance Portfolio
+gmvP <- minvariancePortfolio(myret, Spec, constraints = "maxW[1:16] = 0.4")
+gmv.w <- getWeights(gmvP)
+
+weights1 <- data.frame(gmv.w)
+gmvpW1_draft <- round(subset(weights1, gmv.w*100 > 0.001),3)
+assets <- colnames(getWeights(mymvf))
+assets_names <- row.names(gmvpW1_draft)
+gmvpPdf <- weights1 %>% rename(weights = `gmv.w`) 
+gmvpPdf <- gmvpPdf  %>% mutate(Assets = rownames(gmvpPdf ))
+###############################################
+#Pie Chart for GMVP Weights
+
+#Colours
+weightColours <- brewer.pal(9, "YlGnBu") 
+
+
+countryColours <- brewer.pal(5, "Pastel1") 
+
+
+assetClassColours <- brewer.pal(5, "Pastel2") 
+
+
+piepercent <- assets_names %>% 
+  paste(",",sep ="") %>% 
+  paste(100*as.vector(unlist(gmvpW1_draft))) %>% 
+  paste("%",sep = "")
+
+#pie(as.vector(unlist(gmvpW1_draft)), labels = piepercent, main = " Global Minimum Variance portfolio weights", col = weightColours, border = "white")
+#legend("topright",assets_names, cex = 1, fill = colour, title = "Assets", bg='lightblue')
+
+par(mar = c(1, 1, 1, 1)) # bltr
+
+pie(
+  as.vector(unlist(gmvpW1_draft)), 
+  edges = 200, 
+  radius = 0.8,
+  clockwise = TRUE, # IMPORTANT
+  angle = 45, 
+  col = weightColours,
+  border = "white",
+  labels = piepercent, # NEVER DISPLAY OVERLAPPING LABELS
+  main = "Global Minimum Variance Portfolio Weights",
+  cex = 0.8
+)
+
+legend(
+  x = 1, # DELIBERATE POSITION
+  y = 1, # DELIBERATE POSITION
+  inset = .05, 
+  legend = assets_names, 
+  fill = weightColours,
+  horiz = FALSE,
+  cex = 0.7, # PROPER PARAMETER FOR TEXT SIZE
+  text.width = 0.7, # SET THE BOX WIDTH
+  bty="n" #No border
+)
+
+#################################################################################################################
+
+#Sorting of country and type of investment into dataframe for each ETF
+assetNames <- as.data.frame(colnames(ETFfxReturns))
+assetNames <- as.data.frame(assetNames[-c(1:3),]) %>% rename(Assets = `assetNames[-c(1:3), ]`)
+
+assetNames <- assetNames %>% mutate(`Asset Type` = case_when(
+  Assets %in% c("AGG US Equity", "SCHP US Equity", "VCSH US Equity", "BNDX US Equity", "VWOB US Equity") ~ "Bonds", 
+  Assets %in% c( "1306 JT Equity", "VOO US Equity", "VO US Equity", "VSS US Equity", "VGK US Equity",  "VWO US Equity") ~ "Equity", 
+  Assets %in% c("1343 JT Equity","VNQ US Equity", "VNQI US Equity") ~ "Real Estate",
+  Assets %in% c("IAU US Equity","BCI US Equity")~ "Gold & Commodities"))
+
+assetNames <- assetNames %>% mutate(`Country` = case_when(
+  Assets %in% c("AGG US Equity", "SCHP US Equity", "VCSH US Equity","VOO US Equity", "VO US Equity","VNQ US Equity") ~ "US",
+  Assets %in% c("1306 JT Equity", "1343 JT Equity") ~ "Japan",
+  Assets %in% c("BNDX US Equity", "VWOB US Equity",  "VSS US Equity", "VGK US Equity",  "VWO US Equity", "VNQI US Equity","IAU US Equity","BCI US Equity") ~ "Worldwide"))
+
+###################################################################################################################
+
+#Country & Asset Class Pie Chart
+gmvpCountry <- cbind(assetNames, gmvpPdf$weights * 100) %>% rename(weights = `gmvpPdf$weights * 100`) %>% group_by(Country) %>% summarise(`Percentage Invested` = sum(weights))
+
+piepercent <- gmvpCountry$Country %>% 
+  paste(",",sep ="") %>% 
+  paste(round(gmvpCountry$`Percentage Invested`,1)) %>% 
+  paste("%",sep = "")
+
+pie(gmvpCountry$`Percentage Invested`, labels = piepercent, main = "Countries Invested in the Global Minimum Variance Portfolio", col = countryColours, border = "white")
+legend("topright",gmvpCountry$Country, cex = 0.8,
+   fill = countryColours, bty="n")
+
+gmvpAssetType <- cbind(assetNames, gmvpPdf$weights * 100) %>% rename(weights = `gmvpPdf$weights * 100`) %>% group_by(`Asset Type`) %>% summarise(`Percentage Invested` = sum(weights))
+
+colour <- rainbow(16)
+piepercent <- gmvpAssetType$`Asset Type` %>% 
+  paste(",",sep ="") %>% 
+  paste(round(gmvpAssetType$`Percentage Invested`, 1)) %>% 
+  paste("%",sep = "")
+
+pie(gmvpAssetType$`Percentage Invested`, labels = piepercent, main = "Types of Assets Invested in the Global Minimum Variance Portfolio", col = assetClassColours, border = "white")
+legend("topright",gmvpAssetType$`Asset Type`, cex = 0.75,
+   fill = assetClassColours,bty="n")
+
+#########################################################################################################################
+#Bar plot
+# ggplot(data= gmvpW1_draft , aes(x=assets_names , y=gmv.w, fill=assets_names)) +
+  # geom_bar(stat="identity", position=position_dodge(),colour="black") +
+  # geom_text(aes(label=sprintf("%.02f %%",gmv.w*100)),
+            # position=position_dodge(width=0.9), vjust=-0.25, check_overlap = TRUE) +
+  # ggtitle("Minimum Variance Portfolio Optimal Weights")+ theme(plot.title = element_text(hjust = 0.5)) +
+  # labs(x= "Assets", y = "Weight (%)") +
+  # guides(fill = guide_legend(title = "Assets"))
+
+```
+
+\newpage
+# 4 Tangency Portfolio (Medium Risk)
+
+The second portfolio is the Tangency Portfolio. This portfolio maximises the Sharpe ratio and is the most balanced in terms of risk and return. Relative to the other portfolios, this portfolio carries medium risk.
+\
+\
+```{r Tangent Portfolio, echo=FALSE, fig.height=4, echo = F}
+#Tangency portfolio - HighestSharpe's Slope
+tanP <- tangencyPortfolio(myret, Spec.rf, constraints = "maxW[-c(6, 1, 4, 3,10, 14, 7, 5)]=0.00" )
+# get weights for tangency portfolio
+tan.w <- round(getWeights(tanP), 3)
+#Pie chart of the weights for the Tangency Portfolio
+#weightsPie(tanP, box = FALSE)
+tanwt1 <- data.frame(tan.w)
+tanwt1_draft <- subset(tanwt1, tan.w*100 > 0.001)
+assets_draft <- row.names(tanwt1_draft)
+
+tanPdf <- tanwt1 %>% rename(weights = `tan.w`) 
+tanPdf <- tanPdf  %>% mutate(Assets = rownames(tanPdf ))
+################################################################
+#Pie Chart for Tangency Portfolio
+
+#setting colour
+colour <- rainbow(8)
+
+#Making the names of the labels
+piepercent <- assets_draft %>% 
+  paste(",",sep ="") %>% 
+  paste(100*as.vector(unlist(tanwt1_draft))) %>% 
+  paste("%",sep = "")
+
+#pie chart weight
+#pie(as.vector(unlist(tanwt1_draft)), labels = piepercent, main = "Tangency Portfolio weights", col = weightColours, border = "white")
+#legend("top",assets_draft, cex = 0.5, fill = colour, title = "Assets", bg='lightblue')
+par(mar = c(1, 1, 1, 1))
+
+pie(
+  as.vector(unlist(tanwt1_draft)), 
+  edges = 200, 
+  radius = 0.8,
+  clockwise = TRUE, # IMPORTANT
+  angle = 45, 
+  col = weightColours,
+  border = "white",
+  labels = piepercent, # NEVER DISPLAY OVERLAPPING LABELS
+  main = "Tangency Portfolio Weights",
+  cex = 0.8
+)
+
+legend(
+  x = 1, # DELIBERATE POSITION
+  y = 0.4, # DELIBERATE POSITION
+  inset = .05, 
+  legend = assets_draft, 
+  fill = weightColours,
+  horiz = FALSE,
+  cex = 0.7, # PROPER PARAMETER FOR TEXT SIZE
+  text.width = 0.7, # SET THE BOX WIDTH
+  bty="n" #No border
+)  
+###################################################################################################################
+
+#Country & Asset Class Pie Chart
+tanCountry <- cbind(assetNames, tanPdf$weights * 100) %>% rename(weights = `tanPdf$weights * 100`) %>% group_by(Country) %>% summarise(`Percentage Invested` = sum(weights))
+
+colour <- rainbow(16)
+piepercent <- tanCountry$Country %>% 
+  paste(",",sep ="") %>% 
+  paste(round(tanCountry$`Percentage Invested`,1)) %>% 
+  paste("%",sep = "")
+
+pie(tanCountry$`Percentage Invested`, labels = piepercent, main = "Countries Invested in the Tangency Portfolio",col = countryColours, border = "white")
+legend("topright",tanCountry$Country, cex = 0.8,
+   fill = countryColours, bty="n")
+
+tanAssetType <- cbind(assetNames, tanPdf$weights * 100) %>% rename(weights = `tanPdf$weights * 100`) %>% group_by(`Asset Type`) %>% summarise(`Percentage Invested` = sum(weights))
+tanAssetType2 <-  subset(tanAssetType, tanAssetType$`Asset Type` != "Gold & Commodities")
+
+colour <- rainbow(16)
+piepercent <- tanAssetType2$`Asset Type` %>% 
+  paste(",",sep ="") %>% 
+  paste(round(tanAssetType2$`Percentage Invested`, 1)) %>% 
+  paste("%",sep = "")
+
+pie(tanAssetType2$`Percentage Invested`, labels = piepercent, main = "Types of Assets Invested in the Tangency Portfolio", col = assetClassColours, border = "white")
+legend("topright",tanAssetType2$`Asset Type`, cex = 0.75,
+   fill = assetClassColours, bty="n")
+#########################################################################################################################
+```
+
+\newpage
+# 5 Maximum Returns Portfolio (High Risk)
+
+The last portfolio is the Maximum Returns Portfolio. It is weighted to have the highest returns as well as the highest risk. It caters to investors with higher risk tolerance who are willing to take on larger amounts of risk with their holdings.
+\
+\
+```{r Max returns Portfolio, echo=FALSE, fig.height=4, echo = F}
+ret2 = ETFfxReturns[,-(1:3)]  #excluding dates
+mu1 = t(annualised.expected.miu)#colMeans(ret2)  #mean returns
+na1 = ncol(ret2)  #number of assets
+varc1 = cov(ret2)
+
+riskp1 = NULL  #vector to store risk
+retp1 = NULL  #vector to store returns
+
+w = c(0,0,0,8.4087, 16.2471, 5.0822, 48.3172, 4.7284, 0,4.2494, 3.1067, 0,0, 9.8862,0,0)  #max p weights
+w2 <- w / 100
+r1 = t(w2) %*% mu1 #t(annualised.hist.geo.mean)[-c(1,2),]   #matrix multiplication
+sd1 = t(w2) %*% annualised.covariance.matrix %*% w2 #t(w) %*% varc1 %*% w
+retp1 = rbind(retp1, r1)
+riskp1 = rbind(riskp1, sqrt(sd1))
+
+#list of ETFs
+maxP.ETFs <- c("VWOB US Equity", "1306 JT Equity", "VOO US Equity", "VO US Equity", "VNQI US Equity", "VGK US Equity","BNDX US Equity", "VWO US Equity")
+
+#Weightage of ETFS (1.dp)
+maxP.weights <-  c(16.2, 5.1, 48.3, 4.7, 9.9, 4.3, 8.4, 3.1)
+
+###########################################################################################
+#Pie Chart for MaxP
+
+piepercent <- maxP.ETFs %>% 
+  paste(",",sep ="") %>% 
+  paste(maxP.weights) %>% 
+  paste("%",sep = "")
+
+#pie(maxP.weights, labels = piepercent, main = "Maximum Returns Portfolio weights", col = weightColours, border = "white")
+#legend("top",assets_draft, cex = 0.5, fill = colour, title = "Assets", bg='lightblue')
+
+par(mar = c(1, 1, 1, 1))
+
+pie(
+  maxP.weights, 
+  edges = 200, 
+  radius = 0.8,
+  clockwise = TRUE, # IMPORTANT
+  angle = 45, 
+  col = weightColours,
+  border = "white",
+  labels = piepercent, # NEVER DISPLAY OVERLAPPING LABELS
+  main = "Maximum Returns Portfolio Weights",
+  cex = 0.8
+)
+
+legend(
+  x = 1, # DELIBERATE POSITION
+  y = 0, # DELIBERATE POSITION
+  inset = .05, 
+  legend = maxP.ETFs, 
+  fill = weightColours,
+  horiz = FALSE,
+  cex = 0.7, # PROPER PARAMETER FOR TEXT SIZE
+  text.width = 0.7, # SET THE BOX WIDTH
+  bty="n" #No border
+)  
+###################################################################################################################
+maxPdf <- data.frame(weights = w, Assets = rownames(tanPdf))
+
+#Country & Asset Class Pie Chart
+maxPCountry <- cbind(assetNames, maxPdf$weights) %>% rename(weights = `maxPdf$weights`) %>% group_by(Country) %>% summarise(`Percentage Invested` = sum(weights))
+
+colour <- rainbow(16)
+piepercent <- maxPCountry$Country %>% 
+  paste(",",sep ="") %>% 
+  paste(round(maxPCountry$`Percentage Invested`,1)) %>% 
+  paste("%",sep = "")
+
+pie(maxPCountry$`Percentage Invested`, labels = piepercent, main = "Countries Invested in the Maximum Returns Portfolio", col = countryColours, border = "white")
+legend("topright",maxPCountry$Country, cex = 0.8,
+   fill = countryColours, bty="n")
+
+maxPAssetType <- cbind(assetNames, maxPdf$weights) %>% rename(weights = `maxPdf$weights`) %>% group_by(`Asset Type`) %>% summarise(`Percentage Invested` = sum(weights)) %>% na.omit()
+maxPAssetType2 <-  subset(maxPAssetType, maxPAssetType$`Asset Type` != "Gold & Commodities")
+
+piepercent <- maxPAssetType2$`Asset Type` %>% 
+  paste(",",sep ="") %>% 
+  paste(round(maxPAssetType2$`Percentage Invested`, 1)) %>% 
+  paste("%",sep = "")
+
+pie(maxPAssetType2$`Percentage Invested`, labels = piepercent, main = "Types of Assets Invested in the Maximum Returns Portfolio", col = assetClassColours, border = "white")
+legend("topright",maxPAssetType2$`Asset Type`, cex = 0.75,
+   fill = assetClassColours, bty="n")
+
+#####################################################################################################################
+
+```
+
+\newpage
+# 6 Equal Weights Portfolio
+
+We have also included the Equal Weights Portfolio. This portfolio allows investors to examine the performance of a portfolio that allocates equal weights to our selected ETFs.
+\
+\
+```{r ewP, echo=FALSE,fig.height=4, echo = F}
+ewSpec <- Spec
+setWeights(ewSpec) <- rep(1/(ncol.rets - 3), times = (ncol.rets-3))
+ewP <- feasiblePortfolio(myret, spec = ewSpec, constraints = "LongOnly")
+ewPdf <- as.data.frame(ewP@portfolio@portfolio$weights) %>% rename(weights = `ewP@portfolio@portfolio$weights`) 
+ewPdf <- ewPdf %>% mutate(Assets = rownames(ewPdf)) 
+# ggplot(ewPdf, aes(x = Assets, y = weights, fill = Assets))  + geom_bar(stat = "identity")+ theme_classic() + coord_flip() + theme(legend.position = "none", panel.grid.major = element_blank())
+
+
+#Pie Chart for ewP
+
+piepercent <- ewPdf$Assets %>% 
+  paste(",",sep ="") %>% 
+  paste(100*as.vector(ewPdf$weights)) %>% 
+  paste("%",sep = "")
+
+
+par(mar = c(1, 1, 1, 1))
+
+pie(
+  ewPdf$weights, 
+  edges = 200, 
+  radius = 0.8,
+  clockwise = TRUE, # IMPORTANT
+  angle = 45, 
+  col = weightColours,
+  border = "white",
+  labels = piepercent, # NEVER DISPLAY OVERLAPPING LABELS
+  main = "Equal Weights Portfolio weights",
+  cex = 0.8
+)
+
+# legend(
+#   ncol = 2,
+#   x = 1, # DELIBERATE POSITION
+#   y = 0.5, # DELIBERATE POSITION
+#   inset = .05, 
+#   legend = ewPdf$Assets, 
+#   fill = weightColours,
+#   horiz = FALSE,
+#   cex = 0.7, # PROPER PARAMETER FOR TEXT SIZE
+#   text.width = NULL, # SET THE BOX WIDTH
+#   bty="n" #No border
+# )  
+
+
+ewpCountry <- cbind(assetNames, ewPdf$weights * 100) %>% rename(weights = `ewPdf$weights * 100`) %>% group_by(Country) %>% summarise(`Percentage Invested` = sum(weights))
+
+piepercent <- ewpCountry$Country %>% 
+  paste(",",sep ="") %>% 
+  paste(ewpCountry$`Percentage Invested`) %>% 
+  paste("%",sep = "")
+
+pie(ewpCountry$`Percentage Invested`, labels = piepercent, main = "Countries Invested in the Equal Weights Portfolio", col = countryColours, border = "white")
+legend("topright",ewpCountry$Country, cex = 0.8,
+   fill = countryColours, bty="n")
+
+ewpAssetType <- cbind(assetNames, ewPdf$weights * 100) %>% rename(weights = `ewPdf$weights * 100`) %>% group_by(`Asset Type`) %>% summarise(`Percentage Invested` = sum(weights))
+
+piepercent <- ewpAssetType$`Asset Type` %>% 
+  paste(",",sep ="") %>% 
+  paste(ewpAssetType$`Percentage Invested`) %>% 
+  paste("%",sep = "")
+
+pie(ewpAssetType$`Percentage Invested`, labels = piepercent, main = "Types of Assets Invested in the Equal Weights Portfolio", col = assetClassColours, border = "white")
+legend("bottomright",ewpAssetType$`Asset Type`, cex = 0.75,
+   fill = assetClassColours, bty="n")
+
+```
+
+\newpage
+# 7 Portfolio Statistics 
+
+The following table displays the performance summary of each of our portfolios as well as the Equal Weights Portfolio. It shows the percentages of portfolio returns, portfolio risk, and the Sharpe ratios of each portfolio. 
+
+```{r overall returns and risks, echo=FALSE}
+
+port1 <- c("Global Minimum Variance (Low Risk)", getTargetReturn(gmvP)[1] * 100, getTargetRisk(gmvP)[1] * 100, (getTargetReturn(gmvP)[1] - future.annualised.risk.free.rate) / getTargetRisk(gmvP)[1])
+port2 <- c("Tangency (Medium Risk)", getTargetReturn(tanP)[1] * 100, getTargetRisk(tanP)[1] * 100, (getTargetReturn(tanP)[1] - future.annualised.risk.free.rate) / getTargetRisk(tanP)[1])
+port3 <- c("Maximum Returns (High Risk)", retp1 * 100, riskp1 * 100, (retp1 - future.annualised.risk.free.rate) / riskp1)
+port4 <- c("Equal Weights (Reference)", getTargetReturn(ewP)[1] * 100, getTargetRisk(ewP)[1] * 100, (getTargetReturn(ewP)[1] - future.annualised.risk.free.rate) / getTargetRisk(ewP)[1])
+
+portfolioSummary <- as.data.frame(rbind(port1, port2, port3, port4))
+
+rownames(portfolioSummary) <- portfolioSummary$V1 
+portfolioSummary <- portfolioSummary[,-1] 
+colnames(portfolioSummary) <- c("Portfolio Returns (%)", "Portfolio Risk (%)", "Sharpe Ratio") 
+
+portfolioSummary$`Portfolio Returns (%)` <- as.numeric(portfolioSummary$`Portfolio Returns (%)`)
+
+portfolioSummary$`Portfolio Risk (%)` <- as.numeric(portfolioSummary$`Portfolio Risk (%)`)
+
+portfolioSummary$`Sharpe Ratio` <- as.numeric(portfolioSummary$`Sharpe Ratio`)
+
+options(digits = 3)
+kable(portfolioSummary, caption = "Portfolio Statistics")
+options(digits = 7)
+
+```
+
+The **Global Minimum Variance Portfolio** provides investors with the lowest risk at 8.24%. This portfolio is suitable for investors with low risk tolerance.
+
+The **Tangency Portfolio** has the highest Sharpe ratio amongst all the portfolios at 0.402. This portfolio provides investors with the highest return to risk. When compared to the other portfolios, the Tangency Portfolio has a medium amount of risk.
+
+The **Maximum Returns Portfolio** provides the highest returns of 7.35%. This portfolio is suitable for investors looking to take on higher levels of risk in order to potentially gain higher returns.
+
+The **Equal Weights Portfolio** is mainly used as a reference point to compare against the 3 portfolios.
+
+\newpage
+# 8 Backtesting 
+
+To evaluate the performance of the portfolios, we performed backtesting using 20 years, 10 years and 5 years of historical data respectively. The Equal Weights Portfolio was included as a point of comparison for the performance of the other portfolios.
+
+```{r backtest func and weights, echo=FALSE, eval = T}
+cumulative_returns_func <- function(weights, data, nrows) {
+  starting = 1000
+  #252/12 = 21, we rebalance every 21 days 
+  cumulative_returns <- data.frame(
+    matrix(ncol = ncol.rets-3, 
+           nrow = nrows+1))
+  cumulative_returns[1,] = 1000*weights
+  for(i in 1: nrows) { 
+    for (j in 1:16) { 
+      cumulative_returns[i+1, j] = cumulative_returns[i, j] * 
+        (1 + data[i, j + 3])
+    }
+  if(i%%21 == 0) {
+    sum1 = sum(cumulative_returns[i+1, ])
+    cumulative_returns[i+1, ] = sum1*weights
+    }
+  }
+  return(cumulative_returns)
+}
+
+gmvp.weights = data.frame(t(data.frame(getWeights(gmvP))))
+tanp.weights = data.frame(t(data.frame(getWeights(tanP))))
+maxp.weights = data.frame(0,0,0,0.084087, 0.162471, 0.050822, 0.483172, 0.047284, 0, 0.042494, 0.031067, 0,0, 0.098862,0,0)
+colnames(maxp.weights) <- c("AGG US Equity", "SCHP US Equity", "VCSH US Equity", "BNDX US Equity", "VWOB US Equity", "1306 JT Equity", "VOO US Equity", "VO US Equity", "VSS US Equity", "VGK US Equity", "VWO US Equity", "1343 JT Equity", "VNQ US Equity", "VNQI US Equity", "IAU US Equity", "BCI US Equity")
+ewp.weights = data.frame(0.0625,0.0625,0.0625,0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625, 0.0625)
+colnames(ewp.weights) <- c("AGG US Equity", "SCHP US Equity", "VCSH US Equity", "BNDX US Equity", "VWOB US Equity", "1306 JT Equity", "VOO US Equity", "VO US Equity", "VSS US Equity", "VGK US Equity", "VWO US Equity", "1343 JT Equity", "VNQ US Equity", "VNQI US Equity", "IAU US Equity", "BCI US Equity")
+```
+
+```{r 20Y backtest, echo=FALSE, fig.height=3.5, eval = T}
+#20 years backtest
+ETFfxReturns_20Y <- ETFfxReturns[122:5340, ]
+
+cumulative.returns.gmvp <- cumulative_returns_func(gmvp.weights, ETFfxReturns_20Y, 5219)
+cumulative.returns.tanp <- cumulative_returns_func(tanp.weights, ETFfxReturns_20Y, 5219)
+cumulative.returns.maxp <- cumulative_returns_func(maxp.weights, ETFfxReturns_20Y, 5219)
+cumulative.returns.ewp <- cumulative_returns_func(ewp.weights, ETFfxReturns_20Y, 5219)
+
+ETFfxReturns_20Y$mktProd <- ETFfxReturns_20Y$mkt + 1
+
+ret <- c(ETFfxReturns_20Y[1:5219, 1])
+rs_gmvp <- rowSums(cumulative.returns.gmvp[2:5220, 1:16])/1000
+rs_tanp <- rowSums(cumulative.returns.tanp[2:5220, 1:16])/1000
+rs_maxp <- rowSums(cumulative.returns.maxp[2:5220, 1:16])/1000
+rs_ewp <- rowSums(cumulative.returns.ewp[2:5220, 1:16])/1000
+benchmark <- cumprod(ETFfxReturns_20Y$mktProd)
+
+
+df <- data.frame(ret, rs_gmvp, rs_tanp, rs_maxp, benchmark, rs_ewp)
+plot(x = as.Date(df$x), y = df$rs_gmvp, type = 'l', col = 'red', ylim = c(0.5, 6), main = "Portfolios Backtesting - 20 Years", xlab = "Date", ylab = "Cumulative Returns")
+lines(x = as.Date(df$x), y = df$rs_tanp, type = 'l', col = 'blue')
+lines(x = as.Date(df$x), y = df$rs_maxp, type = 'l', col = 'green3')
+lines(x = as.Date(df$x), y = df$benchmark, type = 'l', col = 'orange')
+lines(x = as.Date(df$x), y = df$rs_ewp, type = 'l', col = 'black')
+legend("topleft", legend = c("Low", "Mid", "High", "Market", "Equal Weights"), col = c("red", "blue", "green3", "orange", "black"), lty=1:2, cex=0.6)
+```
+The performance of the portfolios were examined using historical data from 19 Mar 2002 to 18 Mar 2022 (20 Years).
+
+i. High-risk portfolio **outperforms** the Market and Equal Weights portfolios
+ii. Medium-risk portfolio **underperforms** the Market and Equal Weights portfolios
+iii. Low-risk portfolio **underperforms** the Market and Equal Weights portfolios
+
+```{r 10Y backtest, echo=FALSE, fig.height=3.5, eval = T}
+#10 years backtest
+ETFfxReturns_10Y <- ETFfxReturns[2731:5340, ]
+
+cumulative.returns.gmvp_10Y <- cumulative_returns_func(gmvp.weights, ETFfxReturns_10Y, 2610)
+cumulative.returns.tanp_10Y <- cumulative_returns_func(tanp.weights, ETFfxReturns_10Y, 2610)
+cumulative.returns.maxp_10Y <- cumulative_returns_func(maxp.weights, ETFfxReturns_10Y, 2610)
+cumulative.returns.ewp_10Y <- cumulative_returns_func(ewp.weights, ETFfxReturns_10Y, 2610)
+
+ETFfxReturns_10Y$mktProd <- ETFfxReturns_10Y$mkt + 1
+
+ret_10Y <- c(ETFfxReturns_10Y[1:2610, 1])
+rs_gmvp_10Y <- rowSums(cumulative.returns.gmvp_10Y[2:2611, 1:16])/1000
+rs_tanp_10Y <- rowSums(cumulative.returns.tanp_10Y[2:2611, 1:16])/1000
+rs_maxp_10Y <- rowSums(cumulative.returns.maxp_10Y[2:2611, 1:16])/1000
+rs_ewp_10Y <- rowSums(cumulative.returns.ewp_10Y[2:2611, 1:16])/1000
+benchmark_10Y <- cumprod(ETFfxReturns_10Y$mktProd)
+
+
+df <- data.frame(ret_10Y, rs_gmvp_10Y, rs_tanp_10Y, rs_maxp_10Y, benchmark_10Y, rs_ewp_10Y)
+plot(x = as.Date(df$x), y = df$rs_gmvp_10Y, type = 'l', col = 'red', ylim = c(0.5, 6), main = "Portfolios Backtesting - 10 Years", xlab = "Date", ylab = "Cumulative Returns")
+lines(x = as.Date(df$x), y = df$rs_tanp_10Y, type = 'l', col = 'blue')
+lines(x = as.Date(df$x), y = df$rs_maxp_10Y, type = 'l', col = 'green3')
+lines(x = as.Date(df$x), y = df$benchmark_10Y, type = 'l', col = 'orange')
+lines(x = as.Date(df$x), y = df$rs_ewp_10Y, type = 'l', col = 'black')
+legend("topleft", legend = c("Low", "Mid", "High", "Market", "Equal Weights"), col = c("red", "blue", "green3", "orange", "black"), lty=1:2, cex=0.6)
+```
+The performance of the portfolios were examined using historical data from 19 Mar 2012 to 18 Mar 2022 (10 Years).
+
+i. High-risk portfolio **outperforms** the Market and Equal Weights portfolios
+ii. Medium-risk portfolio **underperforms** the Market portfolio but **outperforms** the Equal Weights portfolio
+iii. Low-risk portfolio **underperforms** the Market and Equal Weights portfolios
+
+\newpage
+
+```{r 5Y backtest, echo=FALSE, fig.height=3.5, eval = T}
+#5 years backtest
+ETFfxReturns_5Y <- ETFfxReturns[4036:5340, ]
+
+cumulative.returns.gmvp_5Y <- cumulative_returns_func(gmvp.weights, ETFfxReturns_5Y, 1305)
+cumulative.returns.tanp_5Y <- cumulative_returns_func(tanp.weights, ETFfxReturns_5Y, 1305)
+cumulative.returns.maxp_5Y <- cumulative_returns_func(maxp.weights, ETFfxReturns_5Y, 1305)
+cumulative.returns.ewp_5Y <- cumulative_returns_func(ewp.weights, ETFfxReturns_5Y, 1305)
+
+ETFfxReturns_5Y$mktProd <- ETFfxReturns_5Y$mkt + 1
+
+ret_5Y <- c(ETFfxReturns_5Y[1:1305, 1])
+rs_gmvp_5Y <- rowSums(cumulative.returns.gmvp_5Y[2:1306, 1:16])/1000
+rs_tanp_5Y <- rowSums(cumulative.returns.tanp_5Y[2:1306, 1:16])/1000
+rs_maxp_5Y <- rowSums(cumulative.returns.maxp_5Y[2:1306, 1:16])/1000
+rs_ewp_5Y <- rowSums(cumulative.returns.ewp_5Y[2:1306, 1:16])/1000
+benchmark_5Y <- cumprod(ETFfxReturns_5Y$mktProd)
+
+
+df <- data.frame(ret_5Y, rs_gmvp_5Y, rs_tanp_5Y, rs_maxp_5Y, benchmark_5Y, rs_ewp_5Y)
+plot(x = as.Date(df$x), y = df$rs_gmvp_5Y, type = 'l', col = 'red', ylim = c(0.5, 2), main = "Portfolios Backtesting - 5 Years", xlab = "Date", ylab = "Cumulative Returns")
+lines(x = as.Date(df$x), y = df$rs_tanp_5Y, type = 'l', col = 'blue')
+lines(x = as.Date(df$x), y = df$rs_maxp_5Y, type = 'l', col = 'green3')
+lines(x = as.Date(df$x), y = df$benchmark_5Y, type = 'l', col = 'orange')
+lines(x = as.Date(df$x), y = df$rs_ewp_5Y, type = 'l', col = 'black')
+legend("topleft", legend = c("Low", "Mid", "High", "Market", "Equal Weights"), col = c("red", "blue", "green3", "orange", "black"), lty=1:2, cex=0.6)
+```
+The performance of the portfolios were examined using historical data from 20 Mar 2017 to 18 Mar 2022 (5 Years).
+
+i. High-risk portfolio **outperforms** the Market and Equal Weights portfolios
+ii. Medium-risk portfolio **underperforms** the Market portfolio but **outperforms** the Equal Weights portfolio
+iii. Low-risk portfolio **underperforms** the Market and Equal Weights portfolios
+
+```{r rebalancing, echo=FALSE}
+# gmvp.weights = data.frame(t(data.frame(getWeights(gmvP))))
+# starting = 1000
+# #252/12 = 21, we rebalance every 21 days 
+# cumulative.returns <- data.frame(
+#   matrix(ncol = ncol.rets-3, 
+#          nrow = nrow.rets+1))
+# cumulative.returns[1,] = 1000*gmvp.weights
+# #cumalative.return = t(cumulative.returns)
+# for(i in 1: nrow.rets) { 
+#   for (j in 1:16) { 
+#     cumulative.returns[i+1, j] = cumulative.returns[i, j] * 
+#       (1 + ETFfxReturns[i, j + 3])
+#   }
+#   if(i%%21 == 0) {
+#     sum1 = sum(cumulative.returns[i+1, ])
+#     cumulative.returns[i+1, ] = sum1*gmvp.weights
+#     }
+# }
+```
+
+\newpage
+# Appendix
+
+We used a 20.5-year period for our calculations, from October 2001 to March 2022. 
+\
+We used the average number of trading days, 252 days, for the purpose of annualisation.
+\
+For ETFs with their currency in USD, we converted the USD returns to JPY returns without hedging for currecy risk.
+
+## Historical Statistics
+
+We include a table calculating the historical annualized geometric return $(\mu)$, variance $(\sigma^2)$, and standard deviation $(\sigma)$ values of the market portfolio, risk-free asset, and individual ETFs over the defined period. 
+
+```{r print historical statistics, echo=FALSE}
+#Change the label for mkt and rf
+annualised.hitorical.statistics <- data.frame(
+  matrix(ncol = 3, nrow = ncol.rets-1))
+colnames(annualised.hitorical.statistics) = c("Geometric return", 
+                                              "Variance", 
+                                              "Standard deviation")
+annualised.hitorical.statistics$`Geometric return` = unlist(annualised.hist.geo.mean)
+annualised.hitorical.statistics$`Variance` = unlist(annualised.hist.var)
+annualised.hitorical.statistics$`Standard deviation` = unlist(annualised.hist.sd)
+
+annualised.hitorical.statistics = round(annualised.hitorical.statistics, 3)
+rownames(annualised.hitorical.statistics) = c("Market", "Risk-Free", ETFfxReturns_Sheet2$ETF)
+
+kable(annualised.hitorical.statistics,caption = "Historical Statistics")
+```
+
+\newpage
+## Inputs for Portfolio Optimisation
+
+In order to perform portfolio optimisation, we obtained the expected annualised return, as well as the covariance matrix.
+
+We included constraints for the individual ETFs. Specifically, we limited the weight of each security to between 3%-40%. This was to ensure proper diversification amongst the securities, while maintaining that each security remained sufficiently significant for practical purposes.
+
+We also ensured a mix of country and asset class in the allocation of securities within each portfolio. This was to ensure proper diversification of our portfolio along these lines as well.
+
+### Expected Annualised Return
+
+To calculate the expected annualised return, we used capital asset pricing model (CAPM). This is given by 
+\begin{center}
+$\mu_i=R^f + \beta_i*MRP$
+\end{center}
+
+### Covariance Matrix
+
+To calculate the covariance matrix, we used the historical values provided.
+\
+\
+```{r print beta values expected miu and covariance matrix, echo=FALSE}
+df.toprint <- data.frame(
+  matrix(ncol = 2, nrow = ncol.rets-3))
+rownames(df.toprint) = c(ETFfxReturns_Sheet2$ETF)
+colnames(df.toprint) = c("Beta", "Expected Annualised Return")
+
+df.toprint$Beta = unlist(beta.df)
+df.toprint$`Expected Annualised Return` = unlist(annualised.expected.miu)
+df.toprint = round(df.toprint,3)
+kable(df.toprint, caption = "Beta and Expected Annualised Return")
+
+```
+
+\newpage 
+
+### Efficient Frontier Plot
+
+Furthermore, we plotted the efficient frontier to visualise where our global minimum variance, equal weights and tangency portfolios lie.
+\
+\
+```{r frontier plot, echo = F}
+#Don't need to print the covariance matrix
+frontierPlot(mymvf)
+tangencyPoints(mymvf, col= "blue", pch = 15)
+equalWeightsPoints(mymvf, col = "dark green", pch = 15)
+minvariancePoints(mymvf, col= "red", pch = 15)
+grid()
+tangencyLines(mymvf)
+singleAssetPoints(mymvf, pch = 4)
+legend(x = "topleft",
+       legend=c("Global Minimum Variance Portfolio","Equal Weights Portfolio","Tangency Portfolio"), 
+       fill = c("red","dark green","blue"), bty = "n")
+```
+
+
+
+#### Risk-Free Rate
+
+For our risk-free rate, we used 0.1%. We obtained this figure by calculating the annualised historical geometric mean for our risk-free asset over the period mentioned above. This is a reasonable estimate given the dovish stance of the Bank of Japan.
+
+#### Beta
+
+Beta is calculated using $\frac{\sigma_{i,m}}{\sigma^2_m}$
+
+#### Market Risk Premium
+
+For our market risk premium (MRP), we used a rate of 6%.
+
+## Correlation Matrix
+
+```{r corrplot, echo = F}
+
+corrplot(cor(ETFfxReturns[,-c(1,3)]))
+
+```
+
+From the correlation matrix, we observed that there are 2 clusters of ETFs which are highly correlated to each other. We were able to group them accordingly using their respective tickers as such:
+
+Group 1: AGG, SCHP, VCSH, BNDX, VWOB
+
+Group 2: VOO, VO, VSS, VGK, VWO
+
+\newpage
+
+## Sharpe Ratio Plot
+
+We also created 400 random portfolios to highlight the performance of our 3 selected portfolios. From the plot, we are able to observe that a higher risk would be associated to higher returns. Additionally, we are able to show how our selected portfolios perform better than if one were to randomly allocate money into different ETFs, as for the same amount of risk, we obtain higher expected returns. 
+
+
+```{r sharpe plot,  echo=FALSE}
+
+np = 400  #number of portfolios
+ret = ETFfxReturns[,-(1:3)]  #excluding dates
+mu = t(annualised.expected.miu)#colMeans(ret2)  #mean returns
+na = ncol(ret2)  #number of assets
+varc = cov(ret2)
+
+#annualised.covariance.matrix = var(ETFfxReturns[,-(1:3)]) * 252
+
+riskp = NULL  #vector to store risk
+retp = NULL  #vector to store returns
+
+for (i in 1:np) {
+    w = diff(c(0, sort(runif(na - 1)), 1))  # random weights
+    r = t(w) %*% mu #t(annualised.hist.geo.mean)[-c(1,2),]   #matrix multiplication
+    sd = t(w) %*% annualised.covariance.matrix %*% w #t(w) %*% varc1 %*% w
+    retp = rbind(retp, r)
+    riskp = rbind(riskp, sqrt(sd))
+}
+
+portfolioSummary <- portfolioSummary %>%  mutate(`Portfolio Returns (%)` = `Portfolio Returns (%)` / 100, `Portfolio Risk (%)` = `Portfolio Risk (%)` / 100)
+
+# create a data frame of risk and return
+d_p1 = data.frame(Ret = retp, Risk = riskp)
+d_p1 = d_p1 %>% mutate(SharpeRatio = (Ret - 0.001697914) / Risk)
+colnames(portfolioSummary) <- colnames(d_p1)
+d_p1 <- rbind(d_p1, portfolioSummary)
+d_p1$type <- rownames(d_p1)
+p1 = ggplot(d_p1, aes(Risk, Ret))
+# scatter plot
+p1 = p1 + geom_point()
+ports <- d_p1[c(401:404),] 
+# scatter plot with density and identified port risk return (highest
+# lowest returns and min risk)
+p1 + geom_point(alpha = 0.3) +
+    labs(colour = "Specific Portfolios", x = "Portfolio Risk", y = "Portfolio Return",
+        title = "Random Feasible Portfolios") + theme_bw() + geom_point(data = ports, aes(Risk, Ret, colour = type), size = 3) + theme_classic() + theme(panel.grid.major = element_blank()) 
+
+```
+
+

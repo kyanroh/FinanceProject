@@ -1,0 +1,583 @@
+---
+title: "Finance Project Report"
+author: | 
+  |
+  |
+  | BT2201 Business Concepts and Metrics for Analytics
+  | Semester 1, Academic Year 2022/2023
+  |
+  |
+  |
+  | Group #11
+  | Fan Kai Jie, A0233048L
+  | Fiona Xiao Jingyi, A0240290R
+  | Ong Yong Chein, A0235421R
+  | Ryan Koh Fang Rong, A0233182M
+  | Shayer Ahmed, A0150756A
+  |  
+output: 
+  pdf_document: default
+  #html_document: default
+---
+
+```{r setup and file input, include=FALSE, warnings=FALSE}
+library(readxl)
+#library(PerformanceAnalytics)
+#library(quantmod)
+library(xts)
+library(zoo)
+library(tidyverse)
+library(dplyr)
+#library(PortfolioAnalytics)
+library(psych)
+library(fPortfolio)
+#library(tidyquant)
+#library(data.table)
+library(knitr)
+#library(kableExtra)
+#library(scales)
+library(ggplot2)
+#library(timetk)
+#library(plotly)
+#library(broom)
+#library(quadprog)
+#library(NMOF)
+options(warn=-1)
+ETFfxReturns <- read_excel("ETFfxReturns.xlsx")
+#View(ETFfxReturns)
+ETFfxReturns_Sheet3 <- read_excel("ETFfxReturns_Sheet3.xlsx")
+#View(ETFfxReturns_Sheet3)
+ETFfxReturns_Sheet2 <- read_excel("ETFfxReturns_Sheet2.xlsx")
+#View(ETFfxReturns_Sheet2)
+```
+
+\newpage
+
+## Introduction
+## 1 Introduction
+## In this project, we have proposed 3 portfolios of ETFs in which we believe a typical Japanese retailer is able to invest comfortably. Taking into account the fact that not all investors have the same level of risk appetite and investment strategy, our 3 portfolios are differentiated according to their risk levels of low, medium, and high risk.
+
+## Our portfolio consists of 16 ETFs from both Japan and the United States. This allows the retail investor exposure to a larger range of securities beyond just their domestic ones.
+
+## We decided to use a 10.5-year period for our calculations, from October 2001 to March 2022.
+
+## We have converted the returns of our ETFs from USD to express them in terms of JPY, such that it would be easier for Japanese investors to gauge their value.
+
+## For our risk-free rate, we are using 0.1%. We obtained this figure by calculating its annualized geometric mean over the period mentioned above.
+
+## The market risk premium is calculated to be at 6%. We obtained this figure similarly by calculating its annualized geometric mean over the same period mentioned above.
+
+## 2 Our Selected List of ETFs
+## The table below shows our chosen list of 16 ETFs. They were chosen based on their fees, liquidity (i.e. bid-ask spread, book-to-market ratio, as well as their tracking error values.
+
+## We have also included a table calculating the geometric mean, variance, and standard deviation values of the individual ETFs’ returns over the defined period.
+
+## 2 Our Selected List of ETFs
+## The table below shows our chosen list of ETFs, as well as their geometric mean, variance, and standard deviation values over the defined period.
+```{r mean and variance of return, echo=FALSE}
+#Book-to-market ratio
+NAV <- c(94.23, 51.67, 73.74, 47.51, 57.39, 2040.23, 345.69, 200.83, 98.29, 51.15, 37.11, 2088.84, 81.65, 38.22, 31.78, 27.30) #NAV obtained from etf.com
+mkt_cap <- cbind(ETFfxReturns_Sheet2[,8], NAV) %>% mutate(BM = `Mkt Cap` / NAV)
+
+BM_table <- cbind(ETFfxReturns_Sheet2[,8], NAV) %>% mutate(NAV = ifelse(rownames(ETFfxReturns_Sheet2) %in% c(6,12), NAV, NAV * 145.6630)) %>% mutate(BM = `Mkt Cap` / NAV) #USDJPY on close of 8 Nov 2022 was 145.6630.
+BM <- BM_table$BM
+
+#Tracking error
+TE <- c(0.12, 5.39, 3.44, 3.55, 8.30, NA, 0.02, 4.52, 4.12, 8.19, 11.63, NA, 11.66, 9.17, 22.78, 0.29)
+
+#ETF Characteristics Table
+ETF_characteristics <- cbind(ETFfxReturns_Sheet2[,1], ETFfxReturns_Sheet2[,2], ETFfxReturns_Sheet2[,4], ETFfxReturns_Sheet2[,6], ETFfxReturns_Sheet2[,7], ETFfxReturns_Sheet2[,10], BM, TE) %>% rename("Liquidity" = "B/A Spread")
+kable(ETF_characteristics)
+
+#Number of rows and columns in the Dataset
+nrow.rets <- nrow(ETFfxReturns)
+ncol.rets <- ncol(ETFfxReturns)
+#ETFfxReturns$mkt <- (1 + ETFfxReturns$mkt)*(1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+#ETFfxReturns$`AGG US Equity` <- (1 + ETFfxReturns$`AGG US Equity`)*(1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+#Unhedged return from USD to JPY
+#Check with Prof again
+for(i in 1:ncol.rets) {
+  if (i!=1 & i!= 3 & i!= 9 & i!= 15){
+    ETFfxReturns[,i] <- (1 + ETFfxReturns[,i]) * 
+      (1 + ETFfxReturns_Sheet3$USDJPY.Curncy) - 1
+  }
+}
+#Number of trading days
+#check with prof again
+number.of.days <- 252
+#Calculating historical geometric mean
+historical.geometric.mean <- data.frame(
+  matrix(ncol = ncol.rets-1, 
+         nrow = 1))
+for (i in 1:(ncol.rets-1)) { 
+  base = 1; 
+  for (j in 1:nrow.rets) {
+      base = base * (1+ETFfxReturns[j, i+1])
+  }
+  geo.mean = base^(1/nrow.rets)-1
+  historical.geometric.mean[1, i] = geo.mean
+}
+annualised.hist.geo.mean = 
+  (1 + historical.geometric.mean)^number.of.days - 1
+colnames(annualised.hist.geo.mean) = colnames(ETFfxReturns)[-1]
+##Calculating historical variance
+historical.var <- data.frame(
+  matrix(ncol = ncol.rets - 1, 
+         nrow = 1))
+for (i in 1:(ncol.rets-1)) { 
+  historical.var[1, i] = 
+    var(ETFfxReturns[,i+1])
+}
+annualised.hist.var = number.of.days * historical.var
+colnames(historical.var) = colnames(ETFfxReturns)[-1]
+colnames(annualised.hist.var) = colnames(ETFfxReturns)[-1]
+#Calculating historical sd
+annualised.hist.sd = annualised.hist.var^(0.5)
+annualised.hist.geo.mean
+annualised.hist.var
+annualised.hist.sd
+#Change the label for mkt and rf
+kable(annualised.hist.geo.mean)
+kable(annualised.hist.var)
+kable(annualised.hist.sd)
+```
+
+```{r Calculation of beta, echo=FALSE}
+## Calculation of beta
+covariance.with.market <- data.frame(
+  matrix(ncol = ncol.rets-3, 
+         nrow = 1))
+for (i in 1:(ncol.rets-3)) { 
+  covariance.with.market[1, i] = 
+    #cov(ETFfxReturns[,i+3]-ETFfxReturns$rf, 
+    #ETFfxReturns[,2]-ETFfxReturns$rf)
+    cov(ETFfxReturns[,i+3], ETFfxReturns[,2])
+}
+#Beta = covariance(i, market)/variance(market)
+beta.df = covariance.with.market/var(ETFfxReturns$mkt)
+#beta.df = covariance.with.market/var(ETFfxReturns$mkt -ETFfxReturns$rf)
+colnames(beta.df) = colnames(ETFfxReturns)[-(1:3)]
+#Demonstrate that linear regression gives the same results
+(lmobj.AGG = lm((`AGG US Equity` )~(`mkt`), data = ETFfxReturns))
+(lmobj.VSS = lm((`VSS US Equity` )~(`mkt`), data = ETFfxReturns))
+#These betas are the same. 
+#Calculating Merrill Lynch Beta 
+merrill.lynch.beta.df = (2/3)*beta.df + (1/3)
+#Display merrill lynch beta
+#Calculating expected return from betas
+#Calculate using the mean of what he suggested and from those two websites
+#Future.annualised.risk.free.rate = 0.001697914. we will look
+#back at history and take the rate.
+annualised.market.risk.premium = mean(0.06, 0.0746, 0.0494)
+future.annualised.risk.free.rate = 0.001697914
+annualised.expected.miu = 
+  future.annualised.risk.free.rate + 
+  beta.df * annualised.market.risk.premium
+colnames(annualised.expected.miu) = colnames(ETFfxReturns)[-(1:3)]
+#Calculating the covariance matrix
+covariance.matrix = cov(ETFfxReturns[,-(1:3)])
+#covariance.matrix2 = var(ETFfxReturns[,-(1:3)])
+annualised.covariance.matrix = covariance.matrix * number.of.days
+#annualised.covariance.matrix2 = covariance.matrix * sqrt(number.of.days)
+```
+
+```{r plotting the frontier, echo=FALSE}
+#Now we have the expected miu and covariance matrix, 
+#we can plot the frontier
+#Simulate the returns to give the desired stats
+B <- array(rnorm(nrow(annualised.covariance.matrix)+1 *
+                   nrow(annualised.covariance.matrix)),
+           dim = c(nrow(annualised.covariance.matrix)+1,
+                   nrow(annualised.covariance.matrix)))
+B <- B %*% backsolve(chol(cov(B)),
+                     diag(1, nrow(annualised.covariance.matrix)))
+B <- t(B) - colMeans(B)
+B <- B / apply(B, 1, sd)
+B <- t(B)
+#round(apply(B, 2, sd), 10)
+## [1] 1 1 1 1 1
+#round(apply(B, 2, mean), 10)
+## [1] 0 0 0 0 0
+#round(cov(B), 10)
+B <- B %*% chol(annualised.covariance.matrix)
+B <- t(B) + unlist(annualised.expected.miu)
+B <- t(B)
+#check
+all.equal(cov(B), annualised.covariance.matrix)
+all.equal(colMeans(B), unlist(annualised.expected.miu))
+Spec <- portfolioSpec()
+Spec.rf <- Spec
+setRiskFreeRate(Spec) <- future.annualised.risk.free.rate
+setRiskFreeRate(Spec.rf) <- future.annualised.risk.free.rate
+simulate.ts <- ts(B)
+myret <- as.timeSeries(simulate.ts)
+mymvf <- portfolioFrontier(myret, Spec, constraints = "LongOnly")
+frontierPlot(mymvf)
+grid()
+tangencyLines(mymvf)
+tailoredFrontierPlot(mymvf)
+```
+### We have modified the weights to create 3 different portfolios to cater to investors with different risk appetites.
+### The first portfolio will be the Global Minimum Variance Portfolio(GVMP) the portfolio with the lowest Risk. 
+### It is weighted to give the least risk out of our holdings, catering to investors whose preferences lie in safe investments with minimal risk.
+
+```{r GMVP, echo=FALSE}
+#Portfolio with the lowest Risk - Global Minimum Variance Portfolio
+gmvP <- minvariancePortfolio(myret, Spec, constraints = "maxW[1:16] = 0.4")
+gmv.w <- getWeights(gmvP)
+#Pie chart of the weights for the GMVP
+weightsPie(gmvP, box = FALSE)
+weights1 <- data.frame(gmv.w)
+gmvpW1_draft <- subset(weights1, gmv.w*100 > 0.001)
+assets <- colnames(getWeights(mymvf))
+assets_names <- row.names(gmvpW1_draft)
+#Bar plot
+ggplot(data= gmvpW1_draft , aes(x=assets_names , y=gmv.w, fill=assets_names)) +
+  geom_bar(stat="identity", position=position_dodge(),colour="black") +
+  geom_text(aes(label=sprintf("%.02f %%",gmv.w*100)),
+            position=position_dodge(width=0.9), vjust=-0.25, check_overlap = TRUE) +
+  ggtitle("Minimum Variance Portfolio Optimal Weights")+ theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Assets", y = "Weight (%)") +
+  guides(fill = guide_legend(title = "Assets"))
+
+###############################################
+#Pie Chart for GMVP
+colour <- rainbow(8)
+piepercent <- assets_names %>% 
+  paste(",",sep ="") %>% 
+  paste(100*as.vector(unlist(gmvpW1_draft))) %>% 
+  paste("%",sep = "")
+
+pie(as.vector(unlist(gmvpW1_draft)), labels = piepercent, main = "Piechart of GMVP portfolio weights", col = colour)
+#legend("topright",assets_draft, cex = 1, fill = colour, title = "Assets", bg='lightblue')
+```
+
+```{r Tangent Portfolio, echo=FALSE}
+#Tangency portfolio - HighestSharpe's Slope
+tanP <- tangencyPortfolio(myret, Spec.rf, constraints = "maxW[-c(6, 1, 4, 3,10, 14, 7, 5)]=0.00" )
+# get weights for tangency portfolio
+tan.w <- round(getWeights(tanP), 3)
+#Pie chart of the weights for the Tangency Portfolio
+weightsPie(tanP, box = FALSE)
+tanwt1 <- data.frame(tan.w)
+tanwt1_draft <- subset(tanwt1, tan.w*100 > 0.001)
+assets_draft <- row.names(tanwt1_draft)
+#Bar plot
+ggplot(data=tanwt1_draft, aes(x=assets_draft, y=tan.w, fill=assets_draft)) +
+  geom_bar(stat="identity", position=position_dodge(),colour="black") +
+  geom_text(aes(label=sprintf("%.02f %%",tan.w*100)),
+            position=position_dodge(width=0.9), vjust=-0.25, check_overlap = TRUE) +
+  ggtitle("Tangency Portfolio Optimal Weights")+ theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Assets", y = "Weight (%)") +
+  guides(fill = guide_legend(title = "Assets"))
+#Pie Chart
+ggplot(tanwt1_draft, aes(x="", y=tan.w, fill=assets_draft)) +
+  geom_bar(stat="identity", width=1) +
+  coord_polar("y", start=0) +
+  theme_void() +
+  geom_text(aes(label = tan.w), color = "black", size= 5,position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer("Pastel1") +
+  ggtitle("MaxP Portfolio Optimal Weights") +
+  guides(fill = guide_legend(title = "Assets"))
+  
+##################################
+#Pie Chart for Tangency Portfolio
+colour <- rainbow(8)
+piepercent <- assets_draft %>% 
+  paste(",",sep ="") %>% 
+  paste(100*as.vector(unlist(tanwt1_draft))) %>% 
+  paste("%",sep = "")
+
+pie(as.vector(unlist(tanwt1_draft)), labels = piepercent, main = "Piechart of tangency portfolio weights", col = colour)
+#legend("top",assets_draft, cex = 0.5, fill = colour, title = "Assets", bg='lightblue')
+```
+
+
+```{r MaxP Portfolio, echo=FALSE}
+Spec.Obj.risk <- Spec
+setType(Spec.Obj.risk) = "CVaR"
+# Set type Variance
+setSolver(Spec.Obj.risk) = "solveRglpk.CVAR"
+# Solver method to be used to resolve weights
+setTargetRisk(Spec.Obj.risk) <- 0.3
+# Maximum Return Portfolio
+maxP <- maxreturnPortfolio(myret, Spec.Obj.risk)
+max.w <- getWeights(maxP)
+# max.w
+weightsPie(maxP, box = FALSE)
+maxPW1 <- data.frame(max.w)
+ggplot(data=maxPW1, aes(x=assets, y=max.w, fill=assets)) +
+  geom_bar(stat="identity", position=position_dodge(),colour="black") +
+  geom_text(aes(label=sprintf("%.02f %%",max.w*100)),
+            position=position_dodge(width=0.9), vjust=-0.25, check_overlap = TRUE) +
+  ggtitle("MaxP Portfolio Optimal Weights")+ theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x= "Assets", y = "Weight (%)")
+  
+####################################
+#Pie Chart for MaxP
+ret2 = ETFfxReturns[,-(1:3)]  #excluding dates
+mu1 = t(annualised.hist.geo.mean)[-c(1,2),]#colMeans(ret2)  #mean returns
+na1 = ncol(ret2)  #number of assets
+varc1 = cov(ret2)
+
+
+riskp1 = NULL  #vector to store risk
+retp1 = NULL  #vector to store returns
+
+w = c(0,0,0,8.4087, 16.2471, 5.0822, 48.3172, 4.7284, 0,4.2494, 3.1067, 0,0, 9.8862,0,0)  #max p weights
+r1 = t(w) %*% mu1 #t(annualised.hist.geo.mean)[-c(1,2),]   #matrix multiplication
+sd1 = t(w) %*% annualised.covariance.matrix %*% w #t(w) %*% varc1 %*% w
+retp1 = rbind(retp1, r1)
+riskp1 = rbind(riskp1, sqrt(sd1))
+
+#list of ETFs
+maxP.ETFs <- c("BNDX US Equity", "VWOB US Equity", "1306 JT Equity", "VOO US Equity", "VO US Equity", "VGK US Equity", "VWO US Equity", "VNQI US Equity")
+
+#Weightage of ETFS
+maxP.weights <-  c(8.4, 16.2, 5.1, 48.3, 4.7, 4.3, 3.1, 9.9)
+
+colour <- rainbow(8)
+piepercent <- maxP.ETFs %>% 
+  paste(",",sep ="") %>% 
+  paste(maxP.weights) %>% 
+  paste("%",sep = "")
+
+pie(maxP.weights, labels = piepercent, main = "Piechart of MaxP portfolio weights", col = colour)
+#legend("top",assets_draft, cex = 0.5, fill = colour, title = "Assets", bg='lightblue')
+
+```
+
+
+Trying to get the different weighted porfolios
+
+first up ewP
+
+```{r ewp2}
+ewSpec <- Spec
+setWeights(ewSpec) <- rep(1/(ncol.rets - 3), times = (ncol.rets-3))
+ewP <- feasiblePortfolio(myret, spec = ewSpec, constraints = "LongOnly")
+getTargetReturn(ewP)
+getTargetRisk(ewP)
+ewP@portfolio@portfolio$weights
+ewPdf <- as.data.frame(ewP@portfolio@portfolio$weights) %>% rename(weights = `ewP@portfolio@portfolio$weights`) 
+ewPdf <- ewPdf %>% mutate(Assets = rownames(ewPdf)) 
+ggplot(ewPdf, aes(x = Assets, y = weights, fill = Assets))  + geom_bar(stat = "identity")+ theme_classic() + coord_flip() + theme(legend.position = "none", panel.grid.major = element_blank()) 
+```
+
+next min variance portfolio
+
+```{r min variance}
+# this is if we didnt force the min to 1.5. Also i realsied ryan alr did this oops 
+mvP <- minvariancePortfolio(myret, spec = Spec, constraints = "minW[1:16] = 0.015")
+getTargetReturn(mvP)
+getTargetRisk(mvP)
+mvP@portfolio@portfolio$weights
+mvPdf <- as.data.frame(mvP@portfolio@portfolio$weights) %>% rename(weights = `mvP@portfolio@portfolio$weights`) 
+mvPdf <- mvPdf %>% mutate(Assets = rownames(mvPdf)) 
+ggplot(mvPdf, aes(x = Assets, y = weights, fill = Assets)) + geom_bar(stat = "identity") + theme_classic() + theme(legend.position = "none", panel.grid.major = element_blank()) + coord_flip() 
+```
+
+```{r sharpe plot}
+np1 = 200  #number of portfolios
+ret2 = ETFfxReturns[,-(1:3)]  #excluding dates
+mu1 = colMeans(ret2)  #mean returns
+na1 = ncol(ret2)  #number of assets
+varc1 = cov(ret2)
+riskp1 = NULL  #vector to store risk
+retp1 = NULL  #vector to store returns
+for (i in 1:np1) {
+    w = diff(c(0, sort(runif(na1 - 1)), 1))  # random weights
+    r1 = t(w) %*% mu1  #matrix multiplication
+    sd1 = t(w) %*% varc1 %*% w
+    retp1 = rbind(retp1, r1)
+    riskp1 = rbind(riskp1, sd1)
+}
+# create a data frame of risk and return
+d_p1 = data.frame(Ret = retp1, Risk = riskp1)
+d_p1 = d_p1 %>% mutate(SharpeRatio = (Ret - 0.001697914) / Risk)
+p1 = ggplot(d_p1, aes(Risk, Ret, colour = SharpeRatio))
+# scatter plot
+p1 = p1 + geom_point()
+# scatter plot with density and identified port risk return (highest
+# lowest returns and min risk)
+p1 + geom_point() + geom_hline(yintercept = c(max(d_p1$Ret), median(d_p1$Ret),
+    min(d_p1$Ret)), colour = c("darkgreen", "darkgray", "darkred"), size = 1) +
+    geom_vline(xintercept = d_p1[(d_p1$Risk == min(d_p1$Risk)), ][, 2]) +
+    labs(colour = "Sharpe Ratio", x = "Portfolio Risk", y = "Portfolio Return",
+        title = "Random Feasible Portfolios") + theme_bw()
+```
+
+```{r ewP}
+ewSpec <- Spec
+setWeights(ewSpec) <- rep(1/(ncol.rets - 3), times = (ncol.rets-3))
+ewP <- feasiblePortfolio(myret, spec = ewSpec, constraints = "LongOnly")
+getTargetReturn(ewP)
+getTargetRisk(ewP)
+ewP@portfolio@portfolio$weights
+ewPdf <- as.data.frame(ewP@portfolio@portfolio$weights) %>% rename(weights = `ewP@portfolio@portfolio$weights`) 
+ewPdf <- ewPdf %>% mutate(Assets = rownames(ewPdf)) 
+ggplot(ewPdf, aes(x = Assets, y = weights, fill = Assets))  + geom_bar(stat = "identity")+ theme_classic() + coord_flip() + theme(legend.position = "none", panel.grid.major = element_blank()) 
+```
+
+next min variance portfolio
+
+```{r min variance2}
+# this is if we didnt force the min to 1.5. Also i realsied ryan alr did this oops 
+mvP <- minvariancePortfolio(myret, spec = Spec, constraints = "minW[1:16] = 0.015")
+getTargetReturn(mvP)
+getTargetRisk(mvP)
+mvP@portfolio@portfolio$weights
+mvPdf <- as.data.frame(mvP@portfolio@portfolio$weights) %>% rename(weights = `mvP@portfolio@portfolio$weights`) 
+mvPdf <- mvPdf %>% mutate(Assets = rownames(mvPdf)) 
+ggplot(mvPdf, aes(x = Assets, y = weights, fill = Assets)) + geom_bar(stat = "identity") + theme_classic() + theme(legend.position = "none", panel.grid.major = element_blank()) + coord_flip() 
+```
+
+```{r rebalancing}
+gmvp.weights = data.frame(t(data.frame(getWeights(gmvP))))
+starting = 1000
+#252/12 = 21, we rebalance every 21 days 
+cumulative.returns <- data.frame(
+  matrix(ncol = ncol.rets-3, 
+         nrow = nrow.rets+1))
+cumulative.returns[1,] = 1000*gmvp.weights
+#cumalative.return = t(cumulative.returns)
+for(i in 1: nrow.rets) { 
+  for (j in 1:16) { 
+    cumulative.returns[i+1, j] = cumulative.returns[i, j] * 
+      (1 + ETFfxReturns[i, j + 3])
+  }
+  if(i%%21 == 0) {
+    sum1 = sum(cumulative.returns[i+1, ])
+    cumulative.returns[i+1, ] = sum1*gmvp.weights
+    }
+}
+```
+
+\newpage
+## Appendix
+
+
+
+```{r USELESS CODE, echo=FALSE}
+# #part 1
+# expected.miu.vector = unlist(annualised.expected.miu)
+# 
+# p1 = mvFrontier(expected.miu.vector, 
+#                     annualised.covariance.matrix, n = 50, 
+#                     rf = NA)
+# plot(y= object$returns, x= object$volatility)
+# 
+# object2 = mvFrontier(unlist(annualised.hist.geo.mean[,-(1:2)]), 
+#                     annualised.covariance.matrix, n = 500, 
+#                     rf = NA)
+# plot(y= object2$returns, x= object2$volatility)
+# 
+# plot(y=expected.miu.vector, x=unlist(annualised.hist.sd[,-(1:2)]))
+# 
+# object3 = maxSharpe(annualised.expected.miu, annualised.covariance.matrix, future.annualised.risk.free.rate, -100)
+# plot(y= object3$returns, x= object3$volatility)
+# 
+# maxSharpe(annualised.expected.miu-future.annualised.risk.free.rate, annualised.covariance.matrix,
+# wmin = -Inf, wmax = Inf, method = "qp",
+# groups = NULL, groups.wmin = NULL, groups.wmax = NULL)
+# 
+# plot(p1$volatility, p1$return, pch = 19, cex = 0.5, type = "o",
+# xlab = "Expected volatility",ylab = "Expected return")
+# lines(p2$volatility, p2$return, col = grey(0.5))
+# 
+# 
+# 
+# 
+# 
+# #Frontier plot
+# nFunds <- ncol.rets - 3
+# Spec <- portfolioSpec()
+# mymvf <- portfolioFrontier(myret, Spec, constraints = "LongOnly")
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# #Cumulative returns plot
+# cumulative.return.plot = data.frame(
+#   matrix(ncol = ncol.rets-1, 
+#          nrow = nrow.rets))
+# #cumulative.return.plot[1,] = 1
+# 
+# for (i in 1:(ncol.rets-1)) {
+#   cumulative.return.plot[,i] = cumprod(1 + ETFfxReturns[,i+1])
+# }
+# colnames(cumulative.return.plot) = colnames(ETFfxReturns)[-1]
+# cumulative.return.plot.xts = xts(cumulative.return.plot,
+#                                  order.by = ETFfxReturns$x)
+# plot(cumulative.return.plot.xts[,c(1,3)])
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# 
+# #calculate daily returns from annualised.expected.miu
+# 
+# #####neeed to double check this. do we even need daily return?!!!!!!!!!!!
+# daily.expected.miu = ((annualised.expected.miu + 1)^(1/number.of.days))-1
+# Exp.Ret = unlist(daily.expected.miu)
+# 
+# #monthly return
+# #montly.expected.miu = 
+# 
+# ##annualised return
+# Exp.Ret = unlist(annualised.expected.miu)
+# 
+# ## setEstimator(Spec)="CustMuSigHistEstimator"
+# CustMuSigHistEstimator <- function(x, Spec = NULL, ...)
+# {
+#   #  Debug:  x.mat <- assets  x<-pf.data
+#   stopifnot(inherits(x, "timeSeries"))
+#   x.mat = getDataPart(x)  # Extract Matrix
+#   if (is.null(Spec)) {
+#     stop("Custom Estimator requires Expected Returns, see file main.R")
+#   } else {
+#     mu.input = Spec@model$param$Exp.Ret
+#   }
+#   # Estimate:
+#   ## MU.Hist
+#   ########
+#   mu.Hist.m <- colMeans(x.mat)
+#   ## SIGMA
+#   ########
+#   s2.Hist.m <- apply(x.mat, 2, var)
+#   # risk.h <- sqrt(exp(2*12*log(1+mu.Hist.m))*(exp(12*log(s2.Hist.m/(1+mu.Hist.m)^2+1))-1))
+#   risk.h.m <- sqrt(exp(2*log(1+mu.Hist.m))*(exp(log(s2.Hist.m/(1+mu.Hist.m)^2+1))-1))
+#   rho.h <- cor(x.mat)  # No need the .m - correlations are not really time dependent, so to speak - scale free measure
+#   cov.h.m <- diag(risk.h.m) %*% rho.h %*% diag(risk.h.m)
+#   rownames(cov.h.m) <- colnames(cov.h.m) <- names(risk.h.m)
+#   list(mu = mu.input, Sigma = cov.h.m)  # Return Value
+# }
+#  
+# Spec <- portfolioSpec()
+# { #  THESE LINES COMBINED TO USE CUSTOM ESTIMATOR
+#   Spec@model$param$Exp.Ret <- Exp.Ret
+#   setEstimator(Spec)="CustMuSigHistEstimator"
+# }
+# 
+# setNFrontierPoints(Spec) <- 50
+# ### need to change risk free rate
+# setRiskFreeRate(Spec) <- future.annualised.risk.free.rate
+# 
+# xts.object.for.frontier = xts(ETFfxReturns[,-(1:3)], 
+#                                  order.by = ETFfxReturns$x)
+# ts.object.for.frontier = as.timeSeries(xts.object.for.frontier)
+# 
+# frontier.obj <- portfolioFrontier(ts.object.for.frontier, Spec, constraints = "LongOnly")
+# frontierPlot(frontier.obj)
+# grid()
+# singleAssetPoints(frontier.obj)
+# tangencyLines(frontier.obj)
+```
