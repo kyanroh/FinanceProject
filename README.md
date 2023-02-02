@@ -1,5 +1,6 @@
 # FinanceProject
-Finance Project - formulating 3 different risk level portfolios based on data from 15 years 
+Finance Project - formulating 3 different risk level portfolios based on data from 15 years.
+
 Asset management is a very old industry with very solid incumbents who have accumulated extraordinary “war chests”, so to speak. However, in recent years, world-wide, we have experienced what is often
 referred to as an “uberization” of the economy, with radical changes coming from digital innovation.
 This digital revolution is slowly starting to impact the asset management industry. Many platforms
